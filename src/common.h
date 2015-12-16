@@ -23,15 +23,12 @@
     } while (0) \
 
 
-
-
-
 LIST_HEAD(listhead, entry);
 struct entry {
     mqd_t queue;
     LIST_ENTRY(entry) entries;
 };
 
-void parseMessage(char *readBuffer, int length, struct can_frame * frame);
+unsigned char hexCharToByte(char hex);
 
 #endif /* #ifndef COMMON_H_ */

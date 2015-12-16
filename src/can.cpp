@@ -1,14 +1,14 @@
 #include "can.h"
 
 #include <errno.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
 #include <linux/can.h>
 #include <linux/can/raw.h>
-#include <stdlib.h>
 #include <mqueue.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/queue.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include "common.h"
 #include "lib.h"
@@ -62,12 +62,7 @@ void* canRxThread(void *arg)
                 return NULL;
             }
 
-            int maxdlen;
-            if ((size_t)nbytes == CAN_MTU)
-                maxdlen = CAN_MAX_DLEN;
-            else if ((size_t)nbytes == CANFD_MTU)
-                maxdlen = CANFD_MAX_DLEN;
-            else {
+            if ((size_t)nbytes != CAN_MTU) {
                 fputs("read: incomplete CAN frame\n", stderr);
                 return NULL;
             }
@@ -96,8 +91,13 @@ void* canRxThread(void *arg)
                 last_dropcnt = dropcnt;
             }*/
 
-            fprint_canframe(stdout, &frame, maxdlen);
-            printf("\n");
+            /*fprint_canframe(stdout, &frame, maxdlen);
+            char buf[CL_CFSZ];
+
+            canHacker->createTransmit(&frame, buf, CL_CFSZ);
+            sprint_canframe(buf, cf, maxdlen);
+            fprintf(stream, "%s", buf);*/
+            //printf("\n");
         }
 
         fflush(stdout);
@@ -117,7 +117,7 @@ void* canTxThread(void *arg)
 
     while ((bytes_read = mq_receive(job->queue, (char *)&frame, CAN_MTU, NULL))) {
 
-        int nbytes = write(job->socket, &frame, sizeof(struct can_frame));
+        ssize_t nbytes = write(job->socket, &frame, sizeof(struct can_frame));
         if (nbytes < 0) {
             if (errno != ENOBUFS) {
                 perror("write");
@@ -126,7 +126,7 @@ void* canTxThread(void *arg)
             perror("write");
             return NULL;
 
-        } else if (nbytes < sizeof(struct can_frame)) {
+        } else if (nbytes < (ssize_t)CAN_MTU) {
             fprintf(stderr, "write: incomplete CAN frame\n");
             return NULL;
         }

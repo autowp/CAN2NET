@@ -17,14 +17,15 @@
 #include "common.h"
 #include "server.h"
 #include "worker.h"
-
-int serverTxQueueCount;
+#include "CanHacker.h"
 
 const char *cmdlinename = "can0";
 const int serverPort = 20100;
 static volatile int running = 1;
 
 struct listhead head;
+
+CanHacker canHacker;
 
 void sigterm(int signo)
 {
@@ -80,11 +81,11 @@ int initCan(struct sockaddr_can *addr)
     }
 
     // try to switch the socket into CAN FD mode
-    const int canfd_on = 1;
+    /*const int canfd_on = 1;
     if (setsockopt(canSocket, SOL_CAN_RAW, CAN_RAW_FD_FRAMES, &canfd_on, sizeof(canfd_on)) < 0) {
         perror("setsockopt CAN_RAW_FD_FRAMES");
         return -1;
-    }
+    }*/
 
     /*const int dropmonitor_on = 1;
     if (setsockopt(canSocket, SOL_SOCKET, SO_RXQ_OVFL,
@@ -134,6 +135,7 @@ int main(int argc, char **argv)
     canTxAttr.mq_maxmsg = 10;
     canTxAttr.mq_msgsize = CAN_MTU;
     canTxAttr.mq_curmsgs = 0;
+
     mqd_t canTxQueue = mq_open(CAN_TX_QUEUE_NAME, O_CREAT | O_RDWR, 0666, &canTxAttr);
     if (canTxQueue == (mqd_t)-1) {
         fprintf(stderr, "error: %d\n", errno);
@@ -146,6 +148,7 @@ int main(int argc, char **argv)
     canRxAttr.mq_maxmsg = 10;
     canRxAttr.mq_msgsize = CAN_MTU;
     canRxAttr.mq_curmsgs = 0;
+
     mqd_t canRxQueue = mq_open(CAN_RX_QUEUE_NAME, O_CREAT | O_RDWR, 0644, &canRxAttr);
     if (canRxQueue == (mqd_t)-1) {
         perror("mq_open");
@@ -159,14 +162,10 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    struct sockaddr_in clientSocketAddress;
-    int clientSocket;
-
     int serverSocket = initServer();
     if (serverSocket == -1) {
         return -1;
     }
-
 
     // init threads
     struct canTxJob txCanJob;
@@ -204,6 +203,7 @@ int main(int argc, char **argv)
     rxAttr.mq_maxmsg = 10;
     rxAttr.mq_msgsize = NET_MAX_MESSAGE;
     rxAttr.mq_curmsgs = 0;
+
     mqd_t netRxQueue = mq_open(SERVER_RX_QUEUE_NAME, O_CREAT | O_RDWR, 0644, &rxAttr);
     if (netRxQueue == (mqd_t)-1) {
         perror("mq_open");
@@ -215,6 +215,8 @@ int main(int argc, char **argv)
     struct net2canJob net2canJob;
     net2canJob.netQueue = netRxQueue;
     net2canJob.canQueue = canTxQueue;
+    net2canJob.canHacker = &canHacker;
+
     pthread_t net2canThreadID;
     err = pthread_create(&net2canThreadID, NULL, &net2canThread, &net2canJob);
     if (err != 0) {
@@ -226,6 +228,8 @@ int main(int argc, char **argv)
     struct can2netJob can2netJob;
     can2netJob.canQueue = canRxQueue;
     can2netJob.head = &head;
+    can2netJob.canHacker = &canHacker;
+
     pthread_t can2netThreadID;
     err = pthread_create(&can2netThreadID, NULL, &can2netThread, &can2netJob);
     if (err != 0) {
@@ -234,60 +238,25 @@ int main(int argc, char **argv)
         printf("can2net thread created successfully\n");
     }
 
+    struct ServerJob serverJob;
+    serverJob.socket = serverSocket;
+    serverJob.netRxQueue = netRxQueue;
 
-    pthread_t thread_id;
+    pthread_t serverThreadID;
+    err = pthread_create(&serverThreadID, NULL, &serverThread, &serverJob);
+    if (err != 0) {
+        printf("Can't create server thread :[%s]", strerror(err));
+    } else {
+        printf("Server thread created successfully\n");
+    }
 
-    size_t socketAddrLength = sizeof clientSocketAddress;
-    while (running && (clientSocket = accept(serverSocket, (struct sockaddr *)&clientSocketAddress, (socklen_t*)&socketAddrLength)) )
-    {
-        if (clientSocket < 0) {
-            perror("accept failed");
-            return -1;
-        }
+    while (running) {
+        sleep(1);
+    }
 
-        puts("Connection accepted");
-
-        // network tx
-        struct mq_attr txAttr;
-        txAttr.mq_flags = 0;
-        txAttr.mq_maxmsg = 10;
-        txAttr.mq_msgsize = NET_MAX_MESSAGE;
-        txAttr.mq_curmsgs = 0;
-
-        char serverTxQueueName[80];
-        sprintf(serverTxQueueName, SERVER_TX_QUEUE_NAME, serverTxQueueCount++);
-        mqd_t netTxQueue = mq_open(serverTxQueueName, O_CREAT | O_RDWR, 0644, &txAttr);
-        if (netTxQueue == (mqd_t)-1) {
-            perror("mq_open");
-            return -1;
-        }
-
-        struct entry *newEntry = malloc(sizeof(struct entry));
-        newEntry->queue = netTxQueue;
-        LIST_INSERT_HEAD(&head, newEntry, entries);
-
-        struct netTxJob *txJob = malloc(sizeof(struct netTxJob));
-        txJob->socket = clientSocket;
-        txJob->queue = netTxQueue;
-
-        if (pthread_create(&thread_id, NULL, outputConnectionHandler, (void*)txJob) < 0) {
-            perror("could not create thread");
-            return -1;
-        }
-
-        // network rx
-        struct netRxJob *rxJob = malloc(sizeof(struct netRxJob));
-        rxJob->socket = clientSocket;
-        rxJob->queue = netRxQueue;
-
-        if (pthread_create(&thread_id, NULL, inputConnectionHandler, (void*)rxJob) < 0) {
-            perror("could not create thread");
-            return -1;
-        }
-
-        //Now join the thread , so that we dont terminate before the thread
-        //pthread_join( thread_id , NULL);
-        puts("Handler assigned");
+    if (pthread_cancel(serverThreadID)) {
+        perror("pthread_cancel");
+        return -1;
     }
 
     close(canSocket);

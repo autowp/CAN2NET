@@ -20,6 +20,12 @@ struct netTxJob {
     mqd_t queue;
 };
 
+struct ServerJob {
+    int socket;
+    mqd_t netRxQueue;
+    struct listhead *head;
+};
+
 void* serverThread(void *arg);
 
 void *inputConnectionHandler(void *job_ptr);
