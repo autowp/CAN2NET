@@ -241,6 +241,7 @@ int main(int argc, char **argv)
     struct ServerJob serverJob;
     serverJob.socket = serverSocket;
     serverJob.netRxQueue = netRxQueue;
+    serverJob.head = &head;
 
     pthread_t serverThreadID;
     err = pthread_create(&serverThreadID, NULL, &serverThread, &serverJob);
