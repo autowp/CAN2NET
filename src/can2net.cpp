@@ -67,8 +67,7 @@ int initCan(struct sockaddr_can *addr)
     }
 
     struct ifreq ifr;
-    memset(&ifr.ifr_name, 0, sizeof(ifr.ifr_name));
-    strncpy(ifr.ifr_name, cmdlinename, strlen(cmdlinename));
+    strcpy(ifr.ifr_name, cmdlinename);
 
     if (ioctl(canSocket, SIOCGIFINDEX, &ifr) < 0) {
         perror("SIOCGIFINDEX");
